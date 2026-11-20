@@ -50,7 +50,7 @@ setInterval(() => {
 // ==========================================
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const TARGET_CHANNEL_ID = "1537100264618594354";
+const TARGET_CHANNEL_ID = process.env.CHANNEL_ID?.trim() || "1537100264618594354";
 const GIO_SANG = process.env.GIO_SANG || "06:00";
 const GIO_TOI = process.env.GIO_TOI || "19:00";
 
@@ -85,7 +85,7 @@ const TEN_THU_VI = {
 };
 
 const USER_TAG = "<@1188753053898260531>";
-const MY_USER_ID = "1188753053898260531"; // ID tài khoản của bạn
+const MY_USER_ID = "1188753053898260531";
 
 function saveTkb(data) {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 4), 'utf-8');
@@ -211,11 +211,11 @@ async function sendTkbToChannel(label, dayName) {
     try {
         const channel = await client.channels.fetch(TARGET_CHANNEL_ID);
         if (!channel || !channel.isTextBased()) {
-            console.error(`❌ Không tìm thấy kênh hợp lệ với ID: ${TARGET_CHANNEL_ID}`);
+            console.error(`❌ Không tìm thấy kênh/DM hợp lệ với ID: ${TARGET_CHANNEL_ID}`);
             return;
         }
         await channel.send(`${USER_TAG} ${label} **(${thuLabel.toUpperCase()})**\n\n${tkbContent}`);
-        console.log(`✅ Đã gửi TKB ${thuLabel} vào kênh ${TARGET_CHANNEL_ID}`);
+        console.log(`✅ Đã gửi TKB ${thuLabel} tới ${TARGET_CHANNEL_ID}`);
     } catch (err) {
         console.error("❌ Lỗi khi gửi tin nhắn TKB tự động:", err.message);
     }
@@ -226,13 +226,15 @@ client.once(Events.ClientReady, (readyClient) => {
     setupCronJobs();
 });
 
-// Xử lý tin nhắn: CHỈ tại kênh/ID 1537100264618594354 và từ đúng ID chủ nhân
+// Xử lý tin nhắn: CHỈ tại ID 1537100264618594354 và CHỈ từ đúng ID chủ nhân
 client.on(Events.MessageCreate, async (message) => {
+    console.log(`[DEBUG] author=${message.author.id} bot=${message.author.bot} channel=${message.channel.id} content="${message.content}"`);
+
     if (message.author.bot) return;
     if (message.author.id !== MY_USER_ID) return;
     if (message.channel.id !== TARGET_CHANNEL_ID) return;
 
-    // Nếu gửi ảnh tại kênh mục tiêu: phân tích bằng AI và lưu trữ
+    // Nếu gửi ảnh tại kênh/DM mục tiêu: phân tích bằng AI và lưu trữ
     if (message.attachments.size > 0) {
         const attachment = message.attachments.first();
         const isImage = attachment.contentType?.startsWith('image/');
@@ -253,7 +255,7 @@ client.on(Events.MessageCreate, async (message) => {
         return;
     }
 
-    // Chỉ nhận lệnh jt7 tại 1537100264618594354
+    // Chỉ nhận lệnh jt7 tại ID 1537100264618594354
     const content = message.content.trim().toLowerCase();
     if (content === "jt7") {
         const tkbData = loadTkb();
@@ -290,7 +292,7 @@ function setupCronJobs() {
         await sendTkbToChannel("🌙 **THỜI KHÓA BIỂU NGÀY MAI**", tomorrowDay);
     }, { timezone: TIMEZONE });
 
-    console.log(`Đã đặt lịch gửi TKB tại kênh ${TARGET_CHANNEL_ID} lúc ${String(gioSang).padStart(2, '0')}:${String(phutSang).padStart(2, '0')} và ${String(gioToi).padStart(2, '0')}:${String(phutToi).padStart(2, '0')}.`);
+    console.log(`Đã đặt lịch gửi TKB tại ${TARGET_CHANNEL_ID} lúc ${String(gioSang).padStart(2, '0')}:${String(phutSang).padStart(2, '0')} và ${String(gioToi).padStart(2, '0')}:${String(phutToi).padStart(2, '0')}.`);
 }
 
 client.login(DISCORD_TOKEN);
