@@ -1,7 +1,7 @@
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
-import { Client, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
 import { GoogleGenAI } from '@google/genai';
 import cron from 'node-cron';
 
@@ -50,7 +50,7 @@ setInterval(() => {
 // ==========================================
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const CHANNEL_ID = process.env.CHANNEL_ID; 
+const CHANNEL_ID = process.env.CHANNEL_ID?.trim();
 const GIO_SANG = process.env.GIO_SANG || "06:00";
 const GIO_TOI = process.env.GIO_TOI || "19:00";
 
@@ -197,17 +197,45 @@ function getVietnamDate(offsetDays = 0) {
     }
     const weekdayOption = { timeZone: TIMEZONE, weekday: 'long' };
     const dayName = new Intl.DateTimeFormat('en-US', weekdayOption).format(now);
-    
+
     return { dateObj: now, dayName };
 }
 
-client.once('ready', () => {
-    console.log(`Bot Discord đã kết nối thành công: ${client.user.tag}`);
+async function sendTkbToChannel(label, dayName) {
+    if (!CHANNEL_ID) {
+        console.error("❌ Chưa cấu hình CHANNEL_ID trên môi trường, không thể gửi TKB tự động.");
+        return;
+    }
+
+    const thuLabel = TEN_THU_VI[dayName];
+    if (!thuLabel) return;
+
+    const tkbData = loadTkb();
+    const tkbContent = tkbData[dayName] || "Chưa có dữ liệu TKB cho ngày này.";
+
+    try {
+        const channel = await client.channels.fetch(CHANNEL_ID);
+        if (!channel || !channel.isTextBased()) {
+            console.error(`❌ Không tìm thấy kênh hợp lệ với CHANNEL_ID: ${CHANNEL_ID}`);
+            return;
+        }
+        await channel.send(`${USER_TAG} ${label} **(${thuLabel.toUpperCase()})**\n\n${tkbContent}`);
+        console.log(`✅ Đã gửi TKB ${thuLabel} vào kênh ${CHANNEL_ID}`);
+    } catch (err) {
+        console.error("❌ Lỗi khi gửi tin nhắn TKB tự động:", err.message);
+    }
+}
+
+client.once(Events.ClientReady, (readyClient) => {
+    console.log(`Bot Discord đã kết nối thành công: ${readyClient.user.tag}`);
+    if (!CHANNEL_ID) {
+        console.warn("⚠️ Cảnh báo: CHANNEL_ID đang trống!");
+    }
     setupCronJobs();
 });
 
 // Xử lý tin nhắn (CHỈ NHẬN TRONG DM VÀ CHỈ TỪ ID CỦA BẠN)
-client.on('messageCreate', async (message) => {
+client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
     // 1. Chặn tất cả tin nhắn từ server công khai
@@ -257,55 +285,34 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-function setupCronJobs() {
-    const [gioSang, phutSang] = GIO_SANG.split(':');
-    const [gioToi, phutToi] = GIO_TOI.split(':');
+function parseHourMinute(timeStr, fallback) {
+    const parts = (timeStr || fallback).split(':').map(Number);
+    const hour = Number.isInteger(parts[0]) && parts[0] >= 0 && parts[0] <= 23 ? parts[0] : Number(fallback.split(':')[0]);
+    const minute = Number.isInteger(parts[1]) && parts[1] >= 0 && parts[1] <= 59 ? parts[1] : Number(fallback.split(':')[1]);
+    return { hour, minute };
+}
 
-    // Cron sáng (06:00 - Bỏ qua Chủ Nhật)
+function setupCronJobs() {
+    const { hour: gioSang, minute: phutSang } = parseHourMinute(GIO_SANG, "06:00");
+    const { hour: gioToi, minute: phutToi } = parseHourMinute(GIO_TOI, "19:00");
+
+    // Cron sáng (Bỏ qua Chủ Nhật)
     cron.schedule(`${phutSang} ${gioSang} * * *`, async () => {
         const { dayName } = getVietnamDate(0);
         if (dayName === "Sunday") return;
-
-        const thuToday = TEN_THU_VI[dayName];
-        if (!thuToday) return;
-
-        const tkbData = loadTkb();
-        const tkbContent = tkbData[dayName] || "Chưa có dữ liệu TKB.";
-
-        try {
-            const channel = await client.channels.fetch(CHANNEL_ID);
-            if (channel) {
-                await channel.send(`${USER_TAG} ☀️ **THỜI KHÓA BIỂU HÔM NAY (${thuToday.toUpperCase()})**\n\n${tkbContent}`);
-            }
-        } catch (err) {
-            console.error("Lỗi khi gửi tin nhắn sáng:", err.message);
-        }
+        await sendTkbToChannel("☀️ **THỜI KHÓA BIỂU HÔM NAY**", dayName);
     }, { timezone: TIMEZONE });
 
-    // Cron tối (19:00 - Bỏ qua tối Thứ Bảy)
+    // Cron tối (Bỏ qua tối Thứ Bảy)
     cron.schedule(`${phutToi} ${gioToi} * * *`, async () => {
-        const { dayName: currentDay } = getVietnamDate(0); 
-        const { dayName: tomorrowDay } = getVietnamDate(1); 
+        const { dayName: currentDay } = getVietnamDate(0);
+        const { dayName: tomorrowDay } = getVietnamDate(1);
 
         if (currentDay === "Saturday") return;
-
-        const thuTomorrow = TEN_THU_VI[tomorrowDay];
-        if (!thuTomorrow) return;
-
-        const tkbData = loadTkb();
-        const tkbContent = tkbData[tomorrowDay] || "Chưa có dữ liệu TKB.";
-
-        try {
-            const channel = await client.channels.fetch(CHANNEL_ID);
-            if (channel) {
-                await channel.send(`${USER_TAG} 🌙 **THỜI KHÓA BIỂU NGÀY MAI (${thuTomorrow.toUpperCase()})**\n\n${tkbContent}`);
-            }
-        } catch (err) {
-            console.error("Lỗi khi gửi tin nhắn tối:", err.message);
-        }
+        await sendTkbToChannel("🌙 **THỜI KHÓA BIỂU NGÀY MAI**", tomorrowDay);
     }, { timezone: TIMEZONE });
 
-    console.log(`Đã đặt lịch gửi TKB tự động (Chỉ phản hồi DM của đúng chủ nhân ID).`);
+    console.log(`Đã đặt lịch gửi TKB tự động lúc ${String(gioSang).padStart(2, '0')}:${String(phutSang).padStart(2, '0')} và ${String(gioToi).padStart(2, '0')}:${String(phutToi).padStart(2, '0')} (Chỉ phản hồi DM của đúng chủ nhân ID).`);
 }
 
 client.login(DISCORD_TOKEN);
